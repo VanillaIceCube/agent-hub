@@ -1,0 +1,26 @@
+# Local credentials and private configuration
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!*.env.example
+!.env.template
+!*.env.template
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Local dependencies, caches and editor files
+node_modules/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.codex-remote-attachments/
+.codex-ticket-bodies/
