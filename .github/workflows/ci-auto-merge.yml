@@ -87,7 +87,24 @@ jobs:
           ROBOCOP_REVIEWER_LOGIN: ${{ vars.ROBOCOP_REVIEWER_LOGIN || 'robocop-security-officer[bot]' }}
         with:
           script: |
-            await require(`${process.env.GITHUB_WORKSPACE}/policy/.github/scripts/manage-dependabot-auto-merge.js`).checkAndEnable({ github, context, core });
+            const { execFileSync } = require('node:child_process');
+            const policy = require(`${process.env.GITHUB_WORKSPACE}/policy/.github/scripts/manage-dependabot-auto-merge.js`);
+            const paths = execFileSync('git', [
+              '-C', 'subject', 'ls-tree', '-rz', '--name-only', process.env.HEAD_SHA
+            ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).split('\0');
+
+            // The pinned policy exports its independent checks. Supply the jobs produced by
+            // AgentHub and preserve every reviewer check and the shared native-approval policy.
+            const checks = [
+              'Required CI', 'Workflow lint', 'Dependency review', 'Secret scan / Gitleaks',
+              'CodeQL / Detect CodeQL Scope', 'CodeQL / Analyze actions'
+            ];
+            if (paths.some(path => path.endsWith('.py'))) checks.push('CodeQL / Analyze python');
+            if (paths.some(path => /\.(?:[cm]?[jt]s|[jt]sx)$/.test(path))) {
+              checks.push('CodeQL / Analyze javascript-typescript');
+            }
+            policy.independentChecks.splice(0, policy.independentChecks.length, ...checks, ...Object.values(policy.reviewers));
+            await policy.checkAndEnable({ github, context, core });
 
       - name: Complete the per-head policy check
         if: always() && steps.pr.outputs.policy_id != ''
