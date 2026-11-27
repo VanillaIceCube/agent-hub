@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: source
+          persist-credentials: false
+      - name: Check out the shared validation tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: VanillaIceCube/infrastructure
+          ref: 06c3e77de29bd8392447fac62c7ae6f904b49427
+          path: policy
+          persist-credentials: false
+      - name: Install the checksum-verified actionlint binary
+        run: node policy/.github/scripts/install-actionlint.js
+      - name: Validate workflow definitions
+        working-directory: source
+        run: actionlint -ignore 'unknown permission scope "vulnerability-alerts"'
+      - name: Install locked validation dependencies
+        run: npm ci --prefix policy/.github --ignore-scripts --no-audit --no-fund
+      - name: Check that CodeQL pins update together
+        working-directory: source
+        run: node ../policy/.github/scripts/validate-workflows.js --check-codeql-pins
+
+  codeql:
+    name: CodeQL
+    uses: ./.github/workflows/gate-codeql.yml
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+  secrets:
+    name: Secret scan
+    uses: VanillaIceCube/infrastructure/.github/workflows/gate-secrets.yml@06c3e77de29bd8392447fac62c7ae6f904b49427 # Infrastructure main, 2026-11-26
+
+  dependencies:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: never
+
+  result:
+    name: Required CI
+    if: always()
+    needs: [lint, codeql, secrets, dependencies]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require every independent check to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: jq -e 'all(.[]; .result == "success")' <<< "$RESULTS"
