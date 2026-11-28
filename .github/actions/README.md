@@ -12,6 +12,8 @@
 
 Each persona has its own GitHub App and OpenAI credentials. A read-only App token collects evidence. The publishing step mints a separate App token when the caller enables publication. The workflow token reads evidence about checks, statuses and branch rules. PR text, prior discussion and scanner output are untrusted inputs. Forks receive the independent gates. The three review workflows have credentials only on eligible same-repository PRs. [Credential setup](../../README.md#-reviewers-and-alert-triage)
 
+RoboCop accepts calls to reusable workflows on `main` in VanillaIceCube/infrastructure and VanillaIceCube/agent-hub with their designated credentials. It reviews changes to the workflow implementation, permissions and secret use. Third-party references require a full commit SHA.
+
 **Inputs and budgets.** All three reviewers accept a complete source diff up to 2,000,000 bytes. A larger diff gets an incomplete-review notice and a failing check. Infrastructure includes all lockfiles. The prior-discussion collector limits pages, entries and UTF-8 bytes and identifies truncated or unavailable history. The code-review context also bounds changed-file content.
 
 **Model requests.** The defaults are `gpt-6-luna`, medium effort and 16,000 output tokens. The caller resolves the optional `AI_REVIEW_*` settings. The [request policy](request-ai-response/request-ai-response.js) rejects unsupported values before a request. Each call records aggregate usage and latency. Web search is available to the code reviewer only for Dependabot major-upgrade evidence.
