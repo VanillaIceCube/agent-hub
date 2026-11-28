@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: VanillaIceCube/infrastructure
-          ref: 51a48938ab24c11c4fe14a6e8d1becfce9936595 # Infrastructure, 2026-11-27
+          ref: main
           path: policy
           persist-credentials: false
       - name: Install the checksum-verified actionlint binary
@@ -37,7 +37,7 @@ jobs:
       - name: Validate workflow definitions
         working-directory: source
         run: node ../policy/.github/scripts/validate-workflows.js --lint
-      - name: Audit workflow permissions and immutable action versions
+      - name: Audit workflow permissions and action references
         working-directory: source
         run: node ../policy/.github/scripts/validate-workflows.js --audit
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -51,7 +51,7 @@ jobs:
 
   codeql:
     name: CodeQL
-    uses: VanillaIceCube/infrastructure/.github/workflows/alert-codeql.yml@51a48938ab24c11c4fe14a6e8d1becfce9936595 # Infrastructure, 2026-11-27
+    uses: VanillaIceCube/infrastructure/.github/workflows/alert-codeql.yml@main
     with:
       scan_only: true
       languages_in_tree: true
@@ -63,20 +63,14 @@ jobs:
 
   secrets:
     name: Secret scan
-    uses: VanillaIceCube/infrastructure/.github/workflows/gate-secrets.yml@51a48938ab24c11c4fe14a6e8d1becfce9936595 # Infrastructure, 2026-11-27
+    uses: VanillaIceCube/infrastructure/.github/workflows/gate-secrets.yml@main
 
   dependencies:
-    name: Dependency review
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    name: Vulnerability
+    uses: VanillaIceCube/infrastructure/.github/workflows/gate-vulnerability.yml@main
     permissions:
       contents: read
       pull-requests: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: VanillaIceCube/infrastructure/.github/actions/review-dependencies@51a48938ab24c11c4fe14a6e8d1becfce9936595 # Infrastructure, 2026-11-27
 
   result:
     name: Required CI
