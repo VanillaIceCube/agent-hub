@@ -186,6 +186,11 @@ jobs:
               Actions may use a clipped directive label only when the required mitigation stays unambiguous.
 
             Evidence discipline:
+            - The owner accepts `@main` for reusable workflows in VanillaIceCube/infrastructure and
+              VanillaIceCube/agent-hub, including workflows that receive their designated credentials.
+              This reference alone is acceptable. Examine changes to the called code, new or broader
+              secret grants, and any use of those credentials outside their designated purpose.
+              Third-party actions and reusable workflows still require full commit SHAs.
             - Label CodeQL, Dependency Review, Malware Review, check-run, and annotation facts as tool evidence.
             - Treat codeql_interpretation as the authoritative scope-aware CodeQL evidence. Raw neutral
               synthetic CodeQL summaries are informational and must not override it.
