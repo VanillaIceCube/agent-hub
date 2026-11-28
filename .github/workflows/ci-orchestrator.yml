@@ -21,36 +21,49 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: source
+          fetch-depth: 0
           persist-credentials: false
       - name: Check out the shared validation tools
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: VanillaIceCube/infrastructure
-          ref: 06c3e77de29bd8392447fac62c7ae6f904b49427
+          ref: 88123d60db9743b50af6779f532a37c5f81ae4a0 # Infrastructure, 2026-11-27
           path: policy
           persist-credentials: false
       - name: Install the checksum-verified actionlint binary
         run: node policy/.github/scripts/install-actionlint.js
-      - name: Validate workflow definitions
-        working-directory: source
-        run: actionlint -ignore 'unknown permission scope "vulnerability-alerts"'
       - name: Install locked validation dependencies
         run: npm ci --prefix policy/.github --ignore-scripts --no-audit --no-fund
-      - name: Check that CodeQL pins update together
+      - name: Validate workflow definitions
         working-directory: source
-        run: node ../policy/.github/scripts/validate-workflows.js --check-codeql-pins
+        run: node ../policy/.github/scripts/validate-workflows.js --lint
+      - name: Audit workflow permissions and immutable action versions
+        working-directory: source
+        run: node ../policy/.github/scripts/validate-workflows.js --audit
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: source/.github/package.json
+      - name: Test the reviewer and alert contracts
+        working-directory: source/.github
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm test
 
   codeql:
     name: CodeQL
-    uses: ./.github/workflows/gate-codeql.yml
+    uses: VanillaIceCube/infrastructure/.github/workflows/alert-codeql.yml@88123d60db9743b50af6779f532a37c5f81ae4a0 # Infrastructure, 2026-11-27
+    with:
+      scan_only: true
+      languages_in_tree: true
     permissions:
       actions: read
       contents: read
+      pull-requests: read
       security-events: write
 
   secrets:
     name: Secret scan
-    uses: VanillaIceCube/infrastructure/.github/workflows/gate-secrets.yml@06c3e77de29bd8392447fac62c7ae6f904b49427 # Infrastructure main, 2026-11-26
+    uses: VanillaIceCube/infrastructure/.github/workflows/gate-secrets.yml@88123d60db9743b50af6779f532a37c5f81ae4a0 # Infrastructure, 2026-11-27
 
   dependencies:
     name: Dependency review
@@ -63,10 +76,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
-        with:
-          fail-on-severity: high
-          comment-summary-in-pr: never
+      - uses: VanillaIceCube/infrastructure/.github/actions/review-dependencies@88123d60db9743b50af6779f532a37c5f81ae4a0 # Infrastructure, 2026-11-27
 
   result:
     name: Required CI

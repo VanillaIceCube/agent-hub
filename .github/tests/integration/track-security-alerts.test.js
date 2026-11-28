@@ -295,3 +295,26 @@ test("ticket previews and publication use separate repository-scoped tokens", ()
   assert.match(action, /github-token: \$\{\{ inputs\.robocop-token \}\}/);
   assert.doesNotMatch(action, /PROJECT_TOKEN|PROJECT_ID:|getOctokit/);
 });
+
+test("AgentHub schedules all three feeds and keeps push and PR scans independent of ticketing", () => {
+  const midnight = [{ cron: "0 0 * * *", timezone: "America/Los_Angeles" }];
+  for (const feed of feeds) {
+    const alert = load(".github/workflows/alert-" + feed + ".yml");
+    assert.deepEqual(alert.on.schedule, midnight);
+    assert.ok(Object.hasOwn(alert.on, "workflow_dispatch"));
+    assert.equal(alert.jobs.aggregate.uses, "./.github/workflows/triage-security.yml");
+    assert.deepEqual(alert.jobs.aggregate.with, { feed, publish: true });
+    assert.deepEqual(alert.jobs.aggregate.permissions, { contents: "read" });
+    assert.equal(alert.jobs.aggregate.needs, undefined);
+  }
+  const main = load(".github/workflows/alert-codeql.yml");
+  const pr = load(".github/workflows/ci-orchestrator.yml").jobs.codeql;
+  assert.deepEqual(main.on.push, { branches: ["main"] });
+  assert.equal(main.on.workflow_dispatch.inputs.scan_only.default, false);
+  assert.equal(main.jobs.scan.if, "github.event_name == 'push' || github.event_name == 'schedule' || inputs.scan_only");
+  assert.equal(main.jobs.aggregate.if, "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && !inputs.scan_only");
+  assert.match(main.jobs.scan.uses, /^VanillaIceCube\/infrastructure\/\.github\/workflows\/alert-codeql\.yml@/);
+  assert.equal(main.jobs.scan.uses, pr.uses);
+  assert.deepEqual(main.jobs.scan.with, { scan_only: true, languages_in_tree: true });
+  assert.deepEqual(pr.with, main.jobs.scan.with);
+});
