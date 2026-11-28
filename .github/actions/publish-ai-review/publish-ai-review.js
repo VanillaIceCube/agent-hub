@@ -1,0 +1,593 @@
+"use strict";
+
+const { probeReadEvidence, reconcile } = require("./reconcile-ai-review");
+const { commentMarkerPrefix } = require("../../scripts/comment-marker-prefix");
+
+function stripCodeFences(text) {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("```")) return trimmed;
+  return trimmed
+    .replace(/^```[a-zA-Z]*\n?/, "")
+    .replace(/```$/, "")
+    .trim();
+}
+
+function normalize(text) {
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function hunkHeader(text) {
+  return (
+    String(text || "")
+      .split(/\r?\n/)
+      .find((line) => line.startsWith("@@")) || ""
+  );
+}
+
+function reviewStateForEvent(reviewEvent) {
+  return (
+    {
+      APPROVE: "APPROVED",
+      REQUEST_CHANGES: "CHANGES_REQUESTED",
+      COMMENT: "COMMENTED",
+    }[reviewEvent] || reviewEvent
+  );
+}
+
+const PERSONA_FORMATS = {
+  "Obi-Wan Code-nobi": {
+    icon: "🧭",
+    findings: "🔎 Findings",
+    evidence: "📚 Evidence reviewed",
+    actions: "✅ Next step",
+  },
+  "Lint Eastwood": {
+    icon: "🤠",
+    findings: "🔧 Build findings",
+    evidence: "🧾 Check evidence",
+    actions: "🛠️ Fix",
+  },
+  RoboCop: {
+    icon: "🛡️",
+    findings: "⚠️ Security findings",
+    evidence: "📋 Evidence",
+    actions: "▶️ Directive",
+  },
+};
+
+function personaFormat(personaName) {
+  return (
+    PERSONA_FORMATS[personaName] || {
+      icon: "🤖",
+      findings: "🔎 Findings",
+      evidence: "📋 Evidence",
+      actions: "✅ Next step",
+    }
+  );
+}
+
+function compactText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanList(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => compactText(value))
+    .filter(Boolean);
+}
+
+function cleanFindings(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((finding) => {
+      if (typeof finding === "string") {
+        return { body: compactText(finding), path: "", line: null };
+      }
+      const path = compactText(finding?.path).replace(/^b\//, "");
+      const line = Number(finding?.line);
+      return {
+        body: compactText(finding?.body),
+        path,
+        line: Number.isInteger(line) && line > 0 ? line : null,
+      };
+    })
+    .filter((finding) => finding.body);
+}
+
+function cleanMajorUpgradeBrief(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const dependency = compactText(value.dependency);
+  const explicitUpgradeStory = compactText(
+    value.upgrade_story ?? value.upgradeStory,
+  );
+  const upgradeTrigger = compactText(
+    value.upgrade_trigger ?? value.upgradeTrigger,
+  );
+  const whyMajor = compactText(
+    value.why_major ??
+      value.whyMajor ??
+      value.upstream_summary ??
+      value.upstreamSummary,
+  );
+  const repositoryExposure = compactText(
+    value.repository_exposure ??
+      value.repositoryExposure ??
+      value.repository_impact ??
+      value.repositoryImpact,
+  );
+  const benefits = compactText(value.benefits);
+  const recommendation = compactText(value.recommendation);
+  const explicitRepositoryImpact = compactText(
+    value.repository_impact ??
+      value.repositoryImpact ??
+      value.repository_recommendation ??
+      value.repositoryRecommendation,
+  );
+  const upgradeStory =
+    explicitUpgradeStory ||
+    cleanList([upgradeTrigger, whyMajor, benefits]).join(" ");
+  const repositoryImpact = explicitRepositoryImpact || repositoryExposure;
+  const sources = (Array.isArray(value.sources) ? value.sources : [])
+    .filter((source) => typeof source === "string")
+    .map((source) => source.trim())
+    .filter((source) => {
+      // URL parsing alone repairs malformed input such as https:/example.com.
+      if (!/^https?:\/\/[^/\\?#]/i.test(source) || /[\s\\\x00-\x1f\x7f]|%(?![0-9a-f]{2})/i.test(source)) {
+        return false;
+      }
+      try {
+        const url = new URL(source);
+        return Boolean(url.hostname) && !url.username && !url.password;
+      } catch {
+        return false;
+      }
+    });
+
+  if (
+    !dependency &&
+    !upgradeStory &&
+    !repositoryImpact &&
+    !recommendation &&
+    sources.length === 0
+  ) {
+    return null;
+  }
+
+  return {
+    dependency,
+    upgradeStory,
+    repositoryImpact,
+    recommendation,
+    sources,
+  };
+}
+
+function renderFinding(finding) {
+  if (!finding.path) return `- ${finding.body}`;
+  const target =
+    finding.line == null ? finding.path : `${finding.path}:${finding.line}`;
+  return `- \`${target.replace(/`/g, "")}\` — ${finding.body}`;
+}
+
+function renderReviewBody({
+  personaName,
+  summary,
+  findings = [],
+  evidence = [],
+  actions = [],
+  majorUpgradeBrief,
+}) {
+  const format = personaFormat(personaName);
+  const sections = [
+    `## ${format.icon} ${personaName}`,
+    "",
+    compactText(summary),
+  ];
+  const renderedFindings = cleanFindings(findings);
+  const renderedEvidence = cleanList(evidence);
+  const renderedActions = cleanList(actions);
+  const renderedMajorUpgradeBrief = cleanMajorUpgradeBrief(majorUpgradeBrief);
+
+  if (renderedMajorUpgradeBrief) {
+    const brief = renderedMajorUpgradeBrief;
+    sections.push("", "## Major upgrade brief", "");
+    if (brief.dependency)
+      sections.push(`- **Dependency:** ${brief.dependency}`);
+    if (brief.upgradeStory) {
+      sections.push(
+        `- **Why this upgrade matters:** ${brief.upgradeStory}`,
+      );
+    }
+    if (brief.repositoryImpact) {
+      sections.push(`- **Repository impact:** ${brief.repositoryImpact}`);
+    }
+    if (brief.recommendation) {
+      sections.push(`- **Recommendation:** ${brief.recommendation}`);
+    }
+    if (brief.sources.length > 0) {
+      sections.push(`- **Sources:** ${brief.sources.join(", ")}`);
+    }
+  }
+
+  if (renderedFindings.length > 0) {
+    sections.push(
+      "",
+      `## ${format.findings}`,
+      "",
+      ...renderedFindings.map(renderFinding),
+    );
+  }
+  if (renderedEvidence.length > 0) {
+    sections.push(
+      "",
+      `## ${format.evidence}`,
+      "",
+      ...renderedEvidence.map((item) => `- ${item}`),
+    );
+  }
+  if (renderedActions.length > 0) {
+    sections.push(
+      "",
+      `## ${format.actions}`,
+      "",
+      ...renderedActions.map((item) => `- ${item}`),
+    );
+  }
+
+  return sections.join("\n");
+}
+
+function addedLinesByFile(files) {
+  const valid = new Map();
+  for (const file of files) {
+    if (!file.patch) continue;
+    let lineNumber;
+    let currentHunk = "";
+    for (const line of file.patch.split(/\r?\n/)) {
+      const hunk = line.match(/^@@ .* \+(\d+)/);
+      if (hunk) {
+        lineNumber = Number(hunk[1]);
+        currentHunk = line;
+        continue;
+      }
+      if (lineNumber == null) continue;
+      if (line.startsWith("+") && !line.startsWith("+++")) {
+        if (!valid.has(file.filename)) valid.set(file.filename, new Map());
+        valid.get(file.filename).set(lineNumber, currentHunk);
+        lineNumber += 1;
+      } else if (!line.startsWith("-")) {
+        lineNumber += 1;
+      }
+    }
+  }
+  return valid;
+}
+
+function unavailableReviewMarker(personaName, headSha, repository) {
+  const persona = personaName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  return `<!-- ${commentMarkerPrefix(repository)}-ai-review-unavailable:${persona}:${headSha} -->`;
+}
+
+async function publishUnavailableReview({
+  github,
+  context,
+  core,
+  personaName,
+  reason,
+  publish,
+}) {
+  if (!publish) {
+    core.setFailed(reason);
+    return;
+  }
+  const { owner, repo } = context.repo;
+  const pull = context.payload.pull_request;
+  const pull_number = pull.number;
+  const marker = unavailableReviewMarker(
+    personaName,
+    pull.head?.sha || context.sha || "unknown",
+    repo,
+  );
+
+  try {
+    const priorReviews = await github.paginate(github.rest.pulls.listReviews, {
+      owner,
+      repo,
+      pull_number,
+      per_page: 100,
+    });
+    if (!priorReviews.some((review) => review.body?.includes(marker))) {
+      const format = personaFormat(personaName);
+      await github.rest.pulls.createReview({
+        owner,
+        repo,
+        pull_number,
+        commit_id: pull.head?.sha,
+        event: "COMMENT",
+        body: [
+          marker,
+          `## ${format.icon} ${personaName}`,
+          "",
+          "**Review unavailable.** OpenAI could not produce a usable review for this commit.",
+          "",
+          "This is not an approval or a finding. See the independent CI gates for their results. Restore OpenAI access, then rerun this review for the current commit.",
+        ].join("\n"),
+      });
+    } else {
+      core.warning(
+        `${personaName} already posted an unavailable notice for this commit.`,
+      );
+    }
+  } catch (error) {
+    core.warning(
+      `${personaName} could not publish its unavailable notice: ${error.message}`,
+    );
+  }
+
+  core.setFailed(reason);
+}
+
+async function publishAiReview({
+  github,
+  context,
+  core,
+  raw,
+  personaName = "AI reviewer",
+  requireMajorUpgradeBrief = false,
+  appSlug,
+  readGithub,
+  publish = false,
+}) {
+  if (readGithub) await probeReadEvidence({ readGithub, context, core });
+  function unavailable(reason) {
+    return publishUnavailableReview({ github, context, core, personaName, publish, reason });
+  }
+
+  const reviewJson = String(raw || "").trim();
+  if (
+    !reviewJson ||
+    reviewJson.startsWith("Missing secret") ||
+    reviewJson.startsWith("OpenAI ")
+  ) {
+    return unavailable(reviewJson || `${personaName} did not return a review.`);
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stripCodeFences(reviewJson));
+  } catch {
+    return unavailable(`${personaName} returned invalid JSON.`);
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return unavailable(`${personaName} returned a review with an invalid structure.`);
+  }
+
+  const event = parsed.event;
+  if (!["APPROVE", "REQUEST_CHANGES", "COMMENT"].includes(event)) {
+    return unavailable(`${personaName} returned a review with an invalid event.`);
+  }
+  const summary = compactText(parsed.summary);
+  if (!summary) {
+    return unavailable(`${personaName} returned a review without a summary.`);
+  }
+  const findings = cleanFindings(parsed.findings);
+  const evidence = cleanList(parsed.evidence);
+  const actions = cleanList(parsed.actions);
+  const majorUpgradeBrief = cleanMajorUpgradeBrief(parsed.major_upgrade_brief);
+  if (requireMajorUpgradeBrief) {
+    const missing = [
+      ["dependency", majorUpgradeBrief?.dependency],
+      ["upgrade_story", majorUpgradeBrief?.upgradeStory],
+      ["repository_impact", majorUpgradeBrief?.repositoryImpact],
+      ["recommendation", majorUpgradeBrief?.recommendation],
+      ["sources", majorUpgradeBrief?.sources.length],
+    ]
+      .filter(([, value]) => !value)
+      .map(([field]) => field);
+    if (missing.length > 0) {
+      return unavailable(`${personaName} returned an incomplete major-upgrade brief; missing ${missing.join(", ")}.`);
+    }
+  }
+  let body = renderReviewBody({
+    personaName,
+    summary,
+    findings,
+    evidence,
+    actions,
+    majorUpgradeBrief,
+  });
+
+  const { owner, repo } = context.repo;
+  const pull_number = context.payload.pull_request.number;
+  const files = await github.paginate(github.rest.pulls.listFiles, {
+    owner,
+    repo,
+    pull_number,
+    per_page: 100,
+  });
+  const valid = addedLinesByFile(files);
+
+  let botLogin = appSlug ? `${appSlug}[bot]` : "";
+  try {
+    if (!appSlug) {
+      const app = await github.rest.apps.getAuthenticated();
+      if (app.data?.slug) botLogin = `${app.data.slug}[bot]`;
+    }
+  } catch (error) {
+    core.warning(
+      `Could not resolve authenticated GitHub App slug: ${error.message}`,
+    );
+  }
+
+  if (event === "APPROVE" && botLogin && context.payload.pull_request.user?.login === botLogin) {
+    core.setFailed(`${personaName} cannot approve its own pull request.`);
+    return;
+  }
+
+  const isOwnReviewItem = (item) => Boolean(botLogin) && item.user?.login === botLogin;
+
+  const priorReviews = await github.paginate(github.rest.pulls.listReviews, {
+    owner,
+    repo,
+    pull_number,
+    per_page: 100,
+  });
+  const priorReviewComments = await github.paginate(
+    github.rest.pulls.listReviewComments,
+    {
+      owner,
+      repo,
+      pull_number,
+      per_page: 100,
+    },
+  );
+  const ownPriorReviews = priorReviews.filter(isOwnReviewItem);
+  const ownPriorComments = priorReviewComments.filter(
+    (comment) => isOwnReviewItem(comment),
+  );
+
+  const priorCommentKeys = new Set();
+  for (const comment of ownPriorComments) {
+    priorCommentKeys.add(
+      [
+        comment.path,
+        String(comment.line || comment.original_line || ""),
+        normalize(comment.body),
+        normalize(hunkHeader(comment.diff_hunk)),
+      ].join("\u0000"),
+    );
+  }
+
+  let malformed = 0;
+  let suppressed = 0;
+  const comments = [];
+  const unplacedComments = [];
+  for (const comment of Array.isArray(parsed.comments) ? parsed.comments : []) {
+    const path = String(comment.path || "")
+      .replace(/^b\//, "")
+      .trim();
+    const line = Number(comment.line);
+    const validLine = Number.isInteger(line) && line > 0;
+    const text = typeof comment.body === "string" ? comment.body.trim() : "";
+    const currentHunk = validLine ? valid.get(path)?.get(line) : undefined;
+    if (!path || !text || !currentHunk) {
+      if (text) {
+        unplacedComments.push({
+          path: path || "unknown file",
+          line: validLine ? line : null,
+          body: text,
+        });
+      } else {
+        malformed += 1;
+      }
+      continue;
+    }
+
+    const duplicateKey = [
+      path,
+      String(line),
+      normalize(text),
+      normalize(currentHunk),
+    ].join("\u0000");
+    if (priorCommentKeys.has(duplicateKey)) {
+      suppressed += 1;
+      continue;
+    }
+    comments.push({ path, line, side: "RIGHT", body: text });
+  }
+
+  const latestOwnReview = ownPriorReviews
+    .filter((review) => review.submitted_at)
+    .sort(
+      (left, right) =>
+        new Date(right.submitted_at) - new Date(left.submitted_at),
+    )[0];
+  const repeatedBody =
+    latestOwnReview && normalize(latestOwnReview.body?.replace(/\n\n<!-- agent-hub-run:\d+:[a-f0-9]+ -->$/, "")) === normalize(body);
+  const decisionUnchanged =
+    latestOwnReview && latestOwnReview.state === reviewStateForEvent(event);
+  const declaredUnchanged = parsed.unchanged === true && decisionUnchanged;
+  if (
+    (declaredUnchanged || suppressed > 0 || repeatedBody) &&
+    comments.length === 0 &&
+    findings.length === 0 &&
+    unplacedComments.length === 0 &&
+    decisionUnchanged &&
+    !majorUpgradeBrief
+  ) {
+    body = renderReviewBody({ personaName, summary });
+  } else {
+    if (unplacedComments.length > 0) {
+      body = renderReviewBody({
+        personaName,
+        summary,
+        findings: [...findings, ...unplacedComments],
+        evidence,
+        actions,
+        majorUpgradeBrief,
+      });
+    }
+    if (suppressed > 0 && typeof core.info === "function") {
+      core.info(
+        `${suppressed} duplicate ${personaName} inline comment(s) were suppressed.`,
+      );
+    }
+    if (unplacedComments.length > 0 && typeof core.info === "function") {
+      core.info(
+        `${unplacedComments.length} ${personaName} finding(s) were moved into the review body.`,
+      );
+    }
+    if (malformed > 0) {
+      core.warning(
+        `${malformed} malformed ${personaName} inline comment(s) were omitted.`,
+      );
+    }
+  }
+
+  const { data: currentPull } = await github.rest.pulls.get({ owner, repo, pull_number });
+  if (currentPull.head.sha !== context.payload.pull_request.head.sha) {
+    core.setFailed("PR head changed; rerun review on the current revision.");
+    return;
+  }
+  if (publish) {
+    // A retry can follow a successful review write and a failed reconciliation.
+    // Reconcile again, but only create one native review for this run and head.
+    const head = currentPull.head.sha;
+    const delivery = `<!-- agent-hub-run:${context.runId}:${head} -->`;
+    const previous = ownPriorReviews.find(review => review.commit_id === head && review.body?.endsWith(delivery));
+    if (!previous) {
+      await github.rest.pulls.createReview({
+        owner, repo, pull_number, commit_id: head, event,
+        body: `${body}\n\n${delivery}`,
+        comments: comments.length ? comments : undefined,
+      });
+    } else if (previous.state !== reviewStateForEvent(event)) {
+      core.setFailed("This run already published a different verdict for this head.");
+      return;
+    }
+    await reconcile({ github, context, core, parsed, appSlug, personaName, readGithub });
+  } else {
+    const preview = JSON.stringify({ repository: `${owner}/${repo}`, head: currentPull.head.sha, personaName, event, body, comments }, null, 2);
+    const escaped = preview.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    await core.summary.addHeading("Proposed pull request review", 3).addCodeBlock(escaped, "json").write();
+    core.info(`Preview ${personaName} on ${currentPull.head.sha}: ${event}, ${comments.length} inline comment(s).`);
+  }
+
+  if (event === "REQUEST_CHANGES") {
+    core.setFailed(`${personaName} requested changes.`);
+  }
+}
+
+module.exports = {
+  publishAiReview,
+  renderReviewBody,
+  unavailableReviewMarker,
+};

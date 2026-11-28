@@ -1,0 +1,96 @@
+name: Triage Security
+
+on:
+  workflow_call:
+    inputs:
+      feed:
+        description: Security alert feed (codeql, malware, or vulnerability).
+        type: string
+        required: true
+      publish:
+        description: Allow this agent to publish to the calling repository.
+        type: boolean
+        default: false
+    secrets:
+      ROBOCOP_PRIVATE_KEY:
+        required: true
+      ROBOCOP_OPENAI_API_KEY:
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: agent-hub-security-alerts-${{ inputs.feed }}${{ !inputs.publish && '-preview' || '' }}
+  cancel-in-progress: false
+
+jobs:
+  aggregate:
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate the alert feed
+        if: inputs.feed != 'codeql' && inputs.feed != 'malware' && inputs.feed != 'vulnerability'
+        run: |
+          echo '::error::Choose codeql, malware, or vulnerability.'
+          exit 1
+
+      - name: Check out the workflow implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Read CodeQL alerts and issues
+        if: inputs.feed == 'codeql'
+        id: codeql-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.ROBOCOP_APP_ID }}
+          private-key: ${{ secrets.ROBOCOP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-issues: read
+          permission-security-events: read
+
+      - name: Read Dependabot alerts and issues
+        if: inputs.feed == 'vulnerability' || inputs.feed == 'malware'
+        id: dependabot-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.ROBOCOP_APP_ID }}
+          private-key: ${{ secrets.ROBOCOP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-issues: read
+          permission-vulnerability-alerts: read
+
+      - name: Create RoboCop issue publishing token
+        if: inputs.publish
+        id: publisher-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.ROBOCOP_APP_ID }}
+          private-key: ${{ secrets.ROBOCOP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-issues: write
+
+      - name: Reconcile alerts with existing tickets
+        uses: ./.github/actions/track-security-alerts
+        with:
+          publish: ${{ inputs.publish }}
+          feed: ${{ inputs.feed }}
+          parent-issue: ${{ vars.ROBOCOP_PARENT_ISSUE }}
+          model: ${{ vars.AI_REVIEW_MODEL }}
+          reasoning-effort: ${{ vars.AI_REVIEW_REASONING_EFFORT }}
+          max-output-tokens: ${{ vars.AI_REVIEW_MAX_OUTPUT_TOKENS }}
+          robocop-token: ${{ steps.codeql-token.outputs.token || steps.dependabot-token.outputs.token }}
+          publisher-token: ${{ steps.publisher-token.outputs.token }}
+          openai-api-key: ${{ secrets.ROBOCOP_OPENAI_API_KEY }}
+          openai-project-id: ${{ vars.OPENAI_REVIEWERS_PROJECT_ID }}
