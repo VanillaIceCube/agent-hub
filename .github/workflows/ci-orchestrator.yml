@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: VanillaIceCube/infrastructure
-          ref: 88123d60db9743b50af6779f532a37c5f81ae4a0 # Infrastructure, 2026-11-27
+          ref: 51a48938ab24c11c4fe14a6e8d1becfce9936595 # Infrastructure, 2026-11-27
           path: policy
           persist-credentials: false
       - name: Install the checksum-verified actionlint binary
@@ -51,7 +51,7 @@ jobs:
 
   codeql:
     name: CodeQL
-    uses: VanillaIceCube/infrastructure/.github/workflows/alert-codeql.yml@88123d60db9743b50af6779f532a37c5f81ae4a0 # Infrastructure, 2026-11-27
+    uses: VanillaIceCube/infrastructure/.github/workflows/alert-codeql.yml@51a48938ab24c11c4fe14a6e8d1becfce9936595 # Infrastructure, 2026-11-27
     with:
       scan_only: true
       languages_in_tree: true
@@ -63,7 +63,7 @@ jobs:
 
   secrets:
     name: Secret scan
-    uses: VanillaIceCube/infrastructure/.github/workflows/gate-secrets.yml@88123d60db9743b50af6779f532a37c5f81ae4a0 # Infrastructure, 2026-11-27
+    uses: VanillaIceCube/infrastructure/.github/workflows/gate-secrets.yml@51a48938ab24c11c4fe14a6e8d1becfce9936595 # Infrastructure, 2026-11-27
 
   dependencies:
     name: Dependency review
@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: VanillaIceCube/infrastructure/.github/actions/review-dependencies@88123d60db9743b50af6779f532a37c5f81ae4a0 # Infrastructure, 2026-11-27
+      - uses: VanillaIceCube/infrastructure/.github/actions/review-dependencies@51a48938ab24c11c4fe14a6e8d1becfce9936595 # Infrastructure, 2026-11-27
 
   result:
     name: Required CI
