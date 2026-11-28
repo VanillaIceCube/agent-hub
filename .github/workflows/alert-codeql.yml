@@ -31,9 +31,7 @@ jobs:
 
   aggregate:
     if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && !inputs.scan_only
-    concurrency:
-      group: security-alerts-codeql
-      cancel-in-progress: false
+    concurrency: security-alerts-codeql
     permissions:
       contents: read
     uses: ./.github/workflows/triage-security.yml

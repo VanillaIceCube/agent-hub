@@ -1,9 +1,10 @@
 "use strict";
 
-module.exports = async function getSecurityEvidence({ github, context, infrastructure = false }) {
+module.exports = async function getSecurityEvidence({ github, context }) {
   const fs = require('fs');
   const { evaluateCodeqlResults } = require('./evaluate-codeql-results');
   const { owner, repo } = context.repo;
+  const infrastructure = repo === 'infrastructure';
   const pull = context.payload.pull_request;
 
   const checkRuns = await github.paginate(github.rest.checks.listForRef, {

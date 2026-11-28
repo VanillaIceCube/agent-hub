@@ -442,10 +442,16 @@ function nativeFixture(initialIssues = []) {
       values.set(issue_number, current);
     },
   };
-  async function run(alerts, groups, parentNumber, sourceFeed = feed) {
-    return synchronizeSecurityAlerts({ publish: true,
-      issueGithub: github, fields, parentNumber, context: { repo: { owner: "repo-owner", repo: "fullstack-template" } },
-      core: { info() {} }, source: { feed: sourceFeed, alerts }, groups,
+  async function run(alerts, groups, { parentNumber, sourceFeed = feed, publish = true } = {}) {
+    return synchronizeSecurityAlerts({
+      issueGithub: github,
+      fields,
+      parentNumber,
+      publish,
+      context: { repo: { owner: "repo-owner", repo: "fullstack-template" } },
+      core: { info() {} },
+      source: { feed: sourceFeed, alerts },
+      groups,
     });
   }
   return { fields, issues, values, events, parents, peers, run, setFieldFailure(fail) { failFieldWrite = fail; } };
@@ -513,13 +519,25 @@ test("a cross-feed peer and existing manual parent survive reconciliation", asyn
   ]);
   const alert = { ref: "dependabot:1", severity: "medium" };
   const groups = [group([alert.ref])];
-  await fixture.run([alert], groups, "90");
+  await fixture.run([alert], groups, { parentNumber: "90" });
   assert.equal(fixture.parents.get("ISSUE_100"), "PARENT");
   assert.deepEqual(fixture.peers, [["ISSUE_100", "ISSUE_40"]]);
 
   fixture.parents.set("ISSUE_100", "MANUAL_PARENT");
-  await fixture.run([alert], groups, "90");
+  await fixture.run([alert], groups, { parentNumber: "90" });
   assert.equal(fixture.parents.get("ISSUE_100"), "MANUAL_PARENT");
+});
+
+test("preview and publication reject a managed parent before writing tickets", async () => {
+  const fixture = nativeFixture([issue(90, ["dependabot:2"])]);
+  const alert = { ref: "dependabot:1", severity: "medium" };
+  for (const publish of [false, true]) {
+    await assert.rejects(
+      fixture.run([alert], [group([alert.ref])], { parentNumber: "90", publish }),
+      /separate tracking issue/,
+    );
+  }
+  assert.deepEqual(fixture.events, []);
 });
 
 test("CodeQL relates the remediation ticket to the issue tracking its source alert", async () => {
@@ -529,7 +547,7 @@ test("CodeQL relates the remediation ticket to the issue tracking its source ale
     url: "https://github.com/example/repo/security/code-scanning/1",
     trackingIssues: ["https://github.com/example/repo/issues/80"],
   };
-  await fixture.run([alert], [group([alert.ref])], undefined, "codeql");
+  await fixture.run([alert], [group([alert.ref])], { sourceFeed: "codeql" });
   assert.deepEqual(fixture.peers, [["ISSUE_100", "ISSUE_80"]]);
   assert.ok(fixture.issues.get(100).body.includes(alert.url));
 });

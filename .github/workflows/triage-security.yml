@@ -20,6 +20,7 @@ on:
 permissions: {}
 
 concurrency:
+  # Callers hold the original security-alerts-* group during cutover.
   group: agent-hub-security-alerts-${{ inputs.feed }}${{ !inputs.publish && '-preview' || '' }}
   cancel-in-progress: false
 

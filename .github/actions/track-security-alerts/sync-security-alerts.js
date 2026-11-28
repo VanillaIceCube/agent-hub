@@ -451,11 +451,6 @@ async function synchronizeSecurityAlerts({
     core.info(`No open ${source.feed} alerts or managed issues to reconcile.`);
     return totals;
   }
-  if (!publish) {
-    core.info(`Preview ${owner}/${repo} ${source.feed}: ${created} issue(s) to create, ${updated} to update, ${closed} to close.`);
-    return totals;
-  }
-
   let parentId;
   if (parentNumber && plan.assignments.length) {
     if (!/^[1-9]\d*$/.test(parentNumber)) throw new Error("Expected a positive RoboCop parent issue number.");
@@ -464,6 +459,11 @@ async function synchronizeSecurityAlerts({
       throw new Error("The configured RoboCop parent must be a separate tracking issue.");
     }
     parentId = parent.node_id;
+  }
+
+  if (!publish) {
+    core.info(`Preview ${owner}/${repo} ${source.feed}: ${created} issue(s) to create, ${updated} to update, ${closed} to close.`);
+    return totals;
   }
 
   const alertByRef = new Map(source.alerts.map((alert) => [alert.ref, alert]));

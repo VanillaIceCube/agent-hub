@@ -19,7 +19,7 @@ These four entry points accept `workflow_call`. A PR reviewer uses the caller’
 
 ### 🚦 Preview and cutover
 
-Call a reviewed AgentHub commit with the existing reviewer inputs and named secrets. The optional boolean `publish` defaults to `false`. A review preview uses the read-only App token, writes its proposed verdict and inline comments to the run summary, and fails on a blocking or unusable result. Alert previews report the number of issues they would create, update or close. An online preview still uses the caller’s inference budget.
+Call a reviewed AgentHub commit with the existing reviewer inputs and named secrets. The optional boolean `publish` defaults to `false`. A review preview uses the read-only App token, writes its proposed verdict and inline comments to the run summary, and fails on a blocking or unusable result. Alert previews validate the configured parent issue when a ticket needs one and report how many issues they would create, update or close. An online preview still uses the caller’s inference budget.
 
 Compare the preview and the existing reviewer on the same PR head. For cutover, change that repository’s existing caller to the same AgentHub pin and set `publish: true`. Keep its job name, dependencies and fork exclusions. The publisher then mints a separate token for that repository and persona. A retry can finish reconciliation after a successful review write. Restore the previous caller revision to roll back. [Migration and rollback criteria](https://github.com/VanillaIceCube/agent-hub/issues/8)
 
