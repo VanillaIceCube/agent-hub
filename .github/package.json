@@ -1,0 +1,13 @@
+{
+  "name": "agent-hub",
+  "private": true,
+  "engines": {
+    "node": "24"
+  },
+  "devDependencies": {
+    "yaml": "2.9.1"
+  },
+  "scripts": {
+    "test": "node --test tests/unit/*.test.js tests/integration/*.test.js"
+  }
+}
